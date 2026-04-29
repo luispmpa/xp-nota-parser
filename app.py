@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import pikepdf
+import pypdf
 import pdfplumber
 import re
 import io
@@ -14,14 +14,22 @@ def extrair_nota():
         if not pdf_bytes:
             return jsonify({'erro': 'PDF não recebido'}), 400
 
-        # Descriptografa
-        pdf_input  = io.BytesIO(pdf_bytes)
+        # Descriptografa com pypdf
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        if reader.is_encrypted:
+            result = reader.decrypt(PDF_PASSWORD)
+            if result == pypdf.PasswordType.NOT_DECRYPTED:
+                return jsonify({'erro': 'Senha incorreta'}), 401
+
+        # Salva PDF descriptografado em memória
+        writer = pypdf.PdfWriter()
+        for page in reader.pages:
+            writer.add_page(page)
         pdf_output = io.BytesIO()
-        with pikepdf.open(pdf_input, password=PDF_PASSWORD) as pdf:
-            pdf.save(pdf_output)
+        writer.write(pdf_output)
         pdf_output.seek(0)
 
-        # Extrai texto
+        # Extrai texto com pdfplumber
         texto_completo = []
         with pdfplumber.open(pdf_output) as pdf:
             for page in pdf.pages:
@@ -33,10 +41,9 @@ def extrair_nota():
         operacoes = parsear_nota(texto)
         return jsonify({'operacoes': operacoes, 'texto_debug': texto[:300]})
 
-    except pikepdf.PasswordError:
-        return jsonify({'erro': 'Senha incorreta'}), 401
     except Exception as e:
         return jsonify({'erro': str(e)}), 500
+
 
 def parsear_nota(texto):
     operacoes = []
@@ -69,6 +76,7 @@ def parsear_nota(texto):
         if ticker and quantidade and preco:
             operacoes.append({'cv':cv,'ticker':ticker,'quantidade':quantidade,'preco':preco})
     return operacoes
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
